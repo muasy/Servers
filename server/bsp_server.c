@@ -24,6 +24,12 @@
 *	原因：该头文件中恢复默认8字节对齐，而下位机全部默认1字节对齐，因此产生冲突。
 *	解决：创建头新文件"bsp_protocal.h"，将需要字节对齐的结构体放到该文件中。
 * -------------------------------------------------------------------------------------------------------
+*
+* ---------------------------------------------------------
+* 版本：V1.0.2 	修改人：SY	修改日期：2017-11-18 09:59:32	
+* 
+* 1.在实际使用过程中，由于局域网内存在多个主机，只使用套接字标识设备容易产生混乱，因此增加设备型号等命令
+* -------------------------------------------------------------------------------------------------------
 *											
 *********************************************************************************************************
 */
@@ -36,6 +42,7 @@
 #include "bsp_server.h"
 #include "bsp_protocal.h"
 #include "crc.h"
+#include "bsp_commu.h"
 
 
 
@@ -47,16 +54,7 @@
 #define SERVER_PORT							(5555)
 #define SERVER_RROADCAST_PORT				(5556)
 
-#define MESSAGE_START                      	0x1B        //消息开始标志
-#define TOKEN                              	0x0E		//记号标志
-#define MESSAGE_END                   	   	0x16  		//消息结束标志 
 
-#define CMD_PRINT_LOG						0x0001
-#define CMD_AUTO_UPGRADE					0x0002
-#define CMD_SHAKE_HANDS						0x0003
-
-#define CMD_NOTIFY_CONNECT					0x1001
-#define CMD_NOTIFY_DISCONNECT				0x1002
 
 
 /*
@@ -64,37 +62,7 @@
 *                              				Private typedef
 *********************************************************************************************************
 */
-#pragma pack(1)
 
-//UDP发送包头 
-struct frame_head_udp
-{
-	uint8_t start;
-	uint8_t addr;
-	uint8_t index;
-	uint8_t rsv1;
-	uint16_t size;
-	uint8_t rsv2;
-	uint8_t token;
-	uint8_t data;
-}; 
-
-//UDP发送包尾
-struct frame_tail_udp
-{
-	uint16_t check;
-	uint8_t end;
-};
-
-#pragma pack()
-
-typedef enum
-{
-	UDP_INDEX_ACT_ASW_NOR=0x00,			//主机主动发起的需要应答的常规数据
-	UDP_INDEX_ACT_NASW_NOR, 			//主机或从机主动发起的不需应答的常规数据
-	UDP_INDEX_PAS_ASW_NOR, 				//设备发起的，主机应答设备的常规数据
-	UDP_INDEX_IVLD=0xFF,			 	//非法索引
-}UDP_INDEX_TypeDef;
 
 /*
 *********************************************************************************************************
@@ -117,13 +85,7 @@ void ms_delay(uint8_t md);
 
 static err_t SocketSend(void *parent, const uint8_t *data, uint32_t lenth, struct SOCKET_TypeDef *socket);
 static void SocketClose(void *parent);
-void bsp_InitLog(void *para);
-bool ParseLogCmd(const uint8_t *rxBody, uint16_t rxLength, \
-		uint8_t *txBody, uint16_t *txLength);
-		
-void bsp_InitUpgrade(void *para);
-bool ParseUpgradeCmd(const uint8_t *rxBody, uint16_t rxLength, \
-		uint8_t *txBody, uint16_t *txLength);
+
 /*
 *********************************************************************************************************
 *                              				Private variables
@@ -179,7 +141,7 @@ static uint8_t ETH_GetIndex(const uint8_t *buffer)
 	struct frame_head_udp *udp_head = (struct frame_head_udp *)(void *)buffer;
 	return udp_head->index;
 }
- 
+
 /*
 *********************************************************************************************************
 * Function Name : ETH_GetPackageBody
@@ -426,32 +388,6 @@ static void SendBroadcastCmd(struct SERVER_TypeDef *this, uint16_t cmd)
 
 /*
 *********************************************************************************************************
-* Function Name : ParseVoidCmd
-* Description	: 解析空命令
-* Input			: None
-* Output		: None
-* Return		: None
-*********************************************************************************************************
-*/
-static bool ParseVoidCmd(const uint8_t *rxBody, uint16_t rxLength, \
-		uint8_t *txBody, uint16_t *txLength)
-{
-	if (sizeof(struct CmdVoidTx) != rxLength)
-	{
-		return FALSE;
-	}
-	
-	struct CmdVoidRx1 *rxHandle = (struct CmdVoidRx1 *)rxBody;	
-	struct CmdVoidTx1 *txHandle = (struct CmdVoidTx1 *)txBody;
-	txHandle->cmd = rxHandle->cmd;
-	txHandle->status = STATUS_OK;
-	*txLength = sizeof(struct CmdVoidTx1);	
-	
-	return TRUE;
-}
-
-/*
-*********************************************************************************************************
 * Function Name : PushSeqQueueCmdVector_CallBack
 * Description	: 顺序队列数据入队
 * Input			: None
@@ -495,12 +431,14 @@ static __INLINE void PopSeqQueueCmdVector_CallBack( void *base, uint32_t offset,
 */
 static void AddCmd(struct SERVER_TypeDef *this, uint16_t cmd, \
 		void (*init)(void *para),\
+		void *private_data,\
 		bool (*parseCmd)(const uint8_t *rxBody, uint16_t rxLength, \
 		uint8_t *txBody, uint16_t *txLength))
 {
 	struct CMD_VECTOR cmdVector;
 	cmdVector.cmd = cmd;
 	cmdVector.init = init;
+	cmdVector.private_data = private_data;
 	cmdVector.parseCmd = parseCmd;
 	PushSeqQueue(&this->cmdQueue, &cmdVector, PushSeqQueueCmdVector_CallBack);
 }
@@ -519,7 +457,7 @@ static void TraverseCmdInit(void *data, void *private)
 	struct CMD_VECTOR *this = data;
 	if (this->init)
 	{
-		this->init(private);
+		this->init(this->private_data);
 	}
 }
 
@@ -535,11 +473,14 @@ static void TraverseCmdInit(void *data, void *private)
 static void ServerInitCmd(struct SERVER_TypeDef *this)
 {
 	CreateSeqQueue(&this->cmdQueue, this->cmdBuffer, ARRAY_SIZE(this->cmdBuffer));
-	AddCmd(this, CMD_PRINT_LOG, bsp_InitLog, ParseLogCmd);
-	AddCmd(this, CMD_AUTO_UPGRADE, bsp_InitUpgrade, ParseUpgradeCmd);
-	AddCmd(this, CMD_SHAKE_HANDS, NULL, ParseVoidCmd);
+	/* 添加命令 */
+	AddCmd(this, CMD_PRINT_LOG, 	bsp_InitLog, 		this, ParseLogCmd);
+	AddCmd(this, CMD_AUTO_UPGRADE, 	bsp_InitUpgrade, 	this, ParseUpgradeCmd);
+	AddCmd(this, CMD_SHAKE_HANDS, 	NULL, 				this, ParseVoidCmd);
+	AddCmd(this, CMD_DEVICE_MODEL, 	NULL, 				this, ParseDeviceModelCmd);
+	
 	struct CMD_VECTOR cmdVector;
-	TraverseSeqQueue(&this->cmdQueue, &cmdVector, this, \
+	TraverseSeqQueue(&this->cmdQueue, &cmdVector, NULL, \
 		PopSeqQueueCmdVector_CallBack, \
 		TraverseCmdInit);
 }
@@ -568,12 +509,12 @@ static void ParseClientRequest(struct SERVER_TypeDef *this, uint32_t length, con
 	uint8_t index = ETH_GetIndex(this->rxBuff);
 	uint16_t cmd = ETH_GetCmd(this->rxBuff);
 	uint16_t msgSize = 0;
-	uint8_t msgBuffer[128];
+	uint8_t msgBuffer[128];	
 	bool ret = FALSE;
 	
 	SEQUEUE_TypeDef queue = this->cmdQueue;	
 	struct CMD_VECTOR cmdVector;
-	while ( PopSeqQueue(&queue, &cmdVector, PopSeqQueueCmdVector_CallBack) == STATUS_DATA_STRUCT_TRUE)
+	while (PopSeqQueue(&queue, &cmdVector, PopSeqQueueCmdVector_CallBack) == STATUS_DATA_STRUCT_TRUE)
 	{
 		if (cmdVector.cmd == cmd)
 		{
@@ -586,10 +527,11 @@ static void ParseClientRequest(struct SERVER_TypeDef *this, uint32_t length, con
 			}
 		}
 	}
+	
 	if (ret == FALSE)
 	{
 		return;
-	}	
+	}
 	/* 发送缓存溢出 */
 	if (msgSize > sizeof(msgBuffer))
 	{

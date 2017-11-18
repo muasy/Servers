@@ -27,7 +27,17 @@
 *                              				Exported Includes
 *********************************************************************************************************
 */
+#define MESSAGE_START                      	0x1B        //消息开始标志
+#define TOKEN                              	0x0E		//记号标志
+#define MESSAGE_END                   	   	0x16  		//消息结束标志 
 
+#define CMD_PRINT_LOG						0x0001
+#define CMD_AUTO_UPGRADE					0x0002
+#define CMD_SHAKE_HANDS						0x0003
+#define CMD_DEVICE_MODEL					0x0004	
+
+#define CMD_NOTIFY_CONNECT					0x1001
+#define CMD_NOTIFY_DISCONNECT				0x1002
 
 /*
 *********************************************************************************************************
@@ -42,22 +52,35 @@
 */
 #pragma pack(1)
 
-struct CmdVoidTx
+//UDP发送包头 
+struct frame_head_udp
 {
-	uint16_t cmd;
-};
+	uint8_t start;
+	uint8_t addr;
+	uint8_t index;
+	uint8_t rsv1;
+	uint16_t size;
+	uint8_t rsv2;
+	uint8_t token;
+	uint8_t data;
+}; 
 
-struct CmdVoidRx1
+//UDP发送包尾
+struct frame_tail_udp
 {
-	uint16_t cmd;
-};
-
-struct CmdVoidTx1 {
-	uint16_t cmd;
-	uint8_t status;
+	uint16_t check;
+	uint8_t end;
 };
 
 #pragma pack()
+
+typedef enum
+{
+	UDP_INDEX_ACT_ASW_NOR=0x00,			//主机主动发起的需要应答的常规数据
+	UDP_INDEX_ACT_NASW_NOR, 			//主机或从机主动发起的不需应答的常规数据
+	UDP_INDEX_PAS_ASW_NOR, 				//设备发起的，主机应答设备的常规数据
+	UDP_INDEX_IVLD=0xFF,			 	//非法索引
+}UDP_INDEX_TypeDef;
 
 
 /*

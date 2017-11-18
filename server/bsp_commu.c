@@ -1,18 +1,18 @@
 /*
 *********************************************************************************************************
-* @file    	bsp_log.c
+* @file    	bsp_commu.c
 * @author  	SY
 * @version 	V1.0.0
-* @date    	2017-10-24 19:12:27
+* @date    	2017-11-18 10:18:43
 * @IDE	 	Keil V5.22.0.0
 * @Chip    	STM32F407VE
-* @brief   	日志源文件
+* @brief   	通讯源文件
 *********************************************************************************************************
 * @attention
 * =======================================================================================================
 *	版本 		时间					作者					说明
 * -------------------------------------------------------------------------------------------------------
-*	Ver1.0.0 	2017-10-24 19:13:03 	SY			创建源文件
+*	Ver1.0.0 	2017-11-18 10:18:53 	SY			创建源文件
 *
 *********************************************************************************************************
 */
@@ -22,8 +22,11 @@
 *                              				Private Includes
 *********************************************************************************************************
 */
+#include "CONFIG.H"
 #include "bsp_server.h"
+#include "bsp_commu.h"
 #include "SeqList.h"
+#include "bsp_rtc.h"
 
 
 
@@ -32,7 +35,6 @@
 *                              				Private define
 *********************************************************************************************************
 */
-
 
 
 /*
@@ -48,31 +50,31 @@ struct LOG_TypeDef {
 	struct SOCKET_TypeDef remoteSocket;
 };
 
-#pragma pack(1)
-
-struct CmdLogRx {
-	uint16_t cmd;
-	uint16_t passwd;
-	uint8_t code;
-	uint16_t dataPort;
-};
-
-struct CmdLogTx {
-	uint16_t cmd;
-	uint8_t status;
-	uint8_t code;
-};
-
-#pragma pack()
-
 enum eLogRxCode {
 	eRxCodeEnable = 0,
 	eRxCodeDisable,
 };
 enum eLogTxCode {
 	eTxCodeOk = 0,
-	eTxCodeBusy,
 };
+
+
+struct UPGRADE_TypeDef {
+	struct SERVER_TypeDef *server;
+};
+
+enum eUpgradeRxCode {
+	eRxCodeAskUpgrade = 0,
+	eRxCodeUpgrade,
+};
+enum eUpgradeTxCode {
+	eTxCodeBusy = 0,
+	eTxCodeNotAllow,
+	eTxCodeAllow,
+};
+
+
+
 
 /*
 *********************************************************************************************************
@@ -91,7 +93,7 @@ enum eLogTxCode {
 *                              				Private function prototypes
 *********************************************************************************************************
 */
-
+int32_t get_ctrl_degree(void);
 
 /*
 *********************************************************************************************************
@@ -99,12 +101,48 @@ enum eLogTxCode {
 *********************************************************************************************************
 */
 static struct LOG_TypeDef g_LogDev;
-
+static struct UPGRADE_TypeDef g_UpgradeDev;
 
 
 /*
 *********************************************************************************************************
 *                              				Private functions
+*********************************************************************************************************
+*/
+/*
+*********************************************************************************************************
+*                              				通用
+*********************************************************************************************************
+*/
+/*
+*********************************************************************************************************
+* Function Name : ParseVoidCmd
+* Description	: 解析空命令
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+bool ParseVoidCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength)
+{
+	if (sizeof(struct CmdVoidTx) != rxLength)
+	{
+		return FALSE;
+	}
+	
+	struct CmdVoidRx1 *rxHandle = (struct CmdVoidRx1 *)rxBody;	
+	struct CmdVoidTx1 *txHandle = (struct CmdVoidTx1 *)txBody;
+	txHandle->cmd = rxHandle->cmd;
+	txHandle->status = STATUS_OK;
+	*txLength = sizeof(struct CmdVoidTx1);	
+	
+	return TRUE;
+}
+
+/*
+*********************************************************************************************************
+*                              				日 志
 *********************************************************************************************************
 */
 /*
@@ -252,5 +290,155 @@ int fgetc(FILE *f)
 #endif
 }
 #endif
+
+/*
+*********************************************************************************************************
+*                              				固件更新
+*********************************************************************************************************
+*/
+/*
+*********************************************************************************************************
+* Function Name : SetAutoUpdatePassword
+* Description	: 设置自动升级密码
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+static int8_t SetAutoUpdatePassword(void)
+{
+	int8_t ret = 0;
+	uint32_t RTC_BKP_DATA;
+	
+	bsp_InitRTC();	
+	WriteToRTC_BKP_DR(0, SERVER_PASSWD);	
+	RTC_BKP_DATA = ReadRTC_BKP_DR(0);	
+	if (RTC_BKP_DATA != SERVER_PASSWD)
+	{
+		ret = -1;
+	}
+	
+	return ret;
+}
+
+/*
+*********************************************************************************************************
+* Function Name : FirmwareUpdate_Handler
+* Description	: 固件升级处理
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+static void FirmwareUpdate_Handler(struct UPGRADE_TypeDef *this)
+{	
+	if (!SetAutoUpdatePassword())
+	{
+		extern struct netif netif;		
+		uint32_t ip = netif.ip_addr.addr;
+		WriteToRTC_BKP_DR(1, (ip>>0)&0xff);
+		WriteToRTC_BKP_DR(2, (ip>>8)&0xff);
+		WriteToRTC_BKP_DR(3, (ip>>16)&0xff);
+		//WriteToRTC_BKP_DR(4, (ip>>24)&0xff);
+		WriteToRTC_BKP_DR(4, 111);
+		bsp_DeInitRTC();
+		
+		this->server->reboot = TRUE;		
+	}
+}
+
+/*
+*********************************************************************************************************
+* Function Name : ParseUpgradeCmd
+* Description	: 解析升级命令
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+bool ParseUpgradeCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength)
+{
+	if (sizeof(struct CmdUpgradeRx) != rxLength)
+	{
+		return FALSE;
+	}
+	
+	struct UPGRADE_TypeDef *this = &g_UpgradeDev;
+	struct CmdUpgradeRx *rxHandle = (struct CmdUpgradeRx *)rxBody;
+	if (rxHandle->passwd != SERVER_PASSWD)
+	{
+		return FALSE;
+	}
+	
+	struct CmdUpgradeTx *txHandle = (struct CmdUpgradeTx *)txBody;
+	txHandle->cmd = rxHandle->cmd;
+	txHandle->status = STATUS_OK;
+	txHandle->code = eTxCodeAllow;
+	if (get_ctrl_degree())
+	{
+		txHandle->code = eTxCodeBusy;
+	}
+	else
+	{
+		if (rxHandle->code == eRxCodeUpgrade)
+		{
+			FirmwareUpdate_Handler(this);
+		}
+	}
+	*txLength = sizeof(struct CmdUpgradeTx);	
+	
+	return TRUE;
+}
+
+/*
+*********************************************************************************************************
+* Function Name : bsp_InitUpgrade
+* Description	: 初始化固件更新
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+void bsp_InitUpgrade(void *para)
+{
+	g_UpgradeDev.server = para;
+}
+
+/*
+*********************************************************************************************************
+*                              				设备型号
+*********************************************************************************************************
+*/
+/*
+*********************************************************************************************************
+* Function Name : ParseDeviceModelCmd
+* Description	: 解析设备型号命令
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+bool ParseDeviceModelCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength)
+{
+	if (sizeof(struct CmdVoidRx1) != rxLength)
+	{
+		return FALSE;
+	}
+
+	struct CmdVoidRx1 *rxHandle = (struct CmdVoidRx1 *)rxBody;
+	struct CmdDeviceModelTx *txHandle = (struct CmdDeviceModelTx *)txBody;
+	memset(txHandle, NULL, sizeof(*txHandle));
+	txHandle->cmd = rxHandle->cmd;
+	txHandle->status = STATUS_OK;
+	strcpy(txHandle->deviceModel, CTRL_MODEL);	
+	strcpy(txHandle->hwModel, PCB_MODEL);
+	txHandle->firmwareVersion = FW_VERSION;	
+	*txLength = sizeof(struct CmdDeviceModelTx);	
+	
+	return TRUE;
+}
+
 
 /************************ (C) COPYRIGHT STMicroelectronics **********END OF FILE*************************/

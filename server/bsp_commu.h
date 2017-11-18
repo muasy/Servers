@@ -1,12 +1,12 @@
 /*
 *********************************************************************************************************
-* @file    	bsp_server.h
+* @file    	bsp_commu.h
 * @author  	SY
 * @version 	V1.0.0
 * @date    	2017-10-24 19:54:57
 * @IDE	 	Keil V5.22.0.0
 * @Chip    	STM32F407VE
-* @brief   	后台服务头文件
+* @brief   	通讯头文件
 *********************************************************************************************************
 * @attention
 *
@@ -19,71 +19,80 @@
 *                              				Define to prevent recursive inclusion
 *********************************************************************************************************
 */
-#ifndef __BSP_SERVER_H
-#define __BSP_SERVER_H
+#ifndef __BSP_COMMU_H
+#define __BSP_COMMU_H
 
 /*
 *********************************************************************************************************
 *                              				Exported Includes
 *********************************************************************************************************
 */
-#include "utils.h"
-#include "command.h"
-#include "SeqQueue.h"
+
 
 /*
 *********************************************************************************************************
 *                              				Exported define
 *********************************************************************************************************
 */
-#define SERVER_PASSWD						(0x5AA5)
 
 /*
 *********************************************************************************************************
 *                              				Exported types
 *********************************************************************************************************
 */
-struct SOCKET_TypeDef {
-	struct ip_addr ip;
-	uint16_t port;
-};
+#pragma pack(1)
 
-enum SOCKET_TYPE {
-	UDP = 0,
-	TCP,	
-};
-
-struct SOCKET_OPS_TypeDef {
-	err_t (*send)(void *parent, const uint8_t *data, uint32_t lenth, struct SOCKET_TypeDef *socket);
-	void (*close)(void *parent);
-};
-
-struct CMD_VECTOR
+struct CmdVoidTx
 {
 	uint16_t cmd;
-	void *private_data;
-	void (*init)(void *para);
-	bool (*parseCmd)(const uint8_t *rxBody, uint16_t rxLength, \
-		uint8_t *txBody, uint16_t *txLength);
 };
 
-struct SERVER_TypeDef {
-	bool reboot;
-	bool enforceStop;
-	enum SOCKET_TYPE socketType;
-	struct SOCKET_TypeDef localSocket;
-	struct SOCKET_TypeDef remoteSocket;
-	uint8_t rxBuff[128];
-	uint8_t txBuff[128];
-	struct CMD_VECTOR cmdBuffer[5];
-	SEQUEUE_TypeDef cmdQueue;
-	struct SOCKET_OPS_TypeDef ops;
+struct CmdVoidRx1
+{
+	uint16_t cmd;
 };
 
-struct UDP_SERVER_TypeDef {
-	struct SERVER_TypeDef server;
-	struct udp_pcb *PCB;
+struct CmdVoidTx1 {
+	uint16_t cmd;
+	uint8_t status;
 };
+
+struct CmdLogRx {
+	uint16_t cmd;
+	uint16_t passwd;
+	uint8_t code;
+	uint16_t dataPort;
+};
+
+struct CmdLogTx {
+	uint16_t cmd;
+	uint8_t status;
+	uint8_t code;
+};
+
+struct CmdUpgradeRx {
+	uint16_t cmd;
+	uint16_t passwd;
+	uint8_t code;
+};
+
+struct CmdUpgradeTx {
+	uint16_t cmd;
+	uint8_t status;
+	uint8_t code;
+};
+
+struct CmdDeviceModelTx {
+	uint16_t cmd;
+	uint8_t status;
+	char deviceModel[32];
+	char hwModel[32];
+	uint16_t firmwareVersion;
+};
+
+
+#pragma pack()
+
 
 
 
@@ -113,8 +122,19 @@ struct UDP_SERVER_TypeDef {
 *                              				Exported functions
 *********************************************************************************************************
 */
-void bsp_InitServer(void);
+bool ParseVoidCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength);
 
+void bsp_InitLog(void *para);
+bool ParseLogCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength);
+	
+void bsp_InitUpgrade(void *para);
+bool ParseUpgradeCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength);
+
+bool ParseDeviceModelCmd(const uint8_t *rxBody, uint16_t rxLength, \
+		uint8_t *txBody, uint16_t *txLength);
 
 #endif
 /************************ (C) COPYRIGHT STMicroelectronics **********END OF FILE*************************/

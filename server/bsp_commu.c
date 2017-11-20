@@ -23,6 +23,7 @@
 *********************************************************************************************************
 */
 #include "CONFIG.H"
+#pragma pack()
 #include "bsp_server.h"
 #include "bsp_commu.h"
 #include "SeqList.h"

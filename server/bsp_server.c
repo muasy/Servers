@@ -2,8 +2,8 @@
 *********************************************************************************************************
 * @file    	bsp_server.c
 * @author  	SY
-* @version 	V1.0.3
-* @date    	2017-11-20 10:35:31
+* @version 	V1.0.4
+* @date    	2017-12-11 11:23:58
 * @IDE	 	Keil V5.22.0.0
 * @Chip    	STM32F407VE
 * @brief   	后台服务源文件
@@ -38,7 +38,14 @@
 *	原因：由于引入了 #include "CONFIG.H"，该文件默认1字节对齐，导致结构体字节错位
 * 	解决：在 #include "CONFIG.H" 后面添加 #pragma pack()恢复字节对齐
 * -------------------------------------------------------------------------------------------------------
-*											
+*										
+* ---------------------------------------------------------
+* 版本：V1.0.4 	修改人：SY	修改日期：2017-12-11 11:23:48
+* 
+* 1.问题：自动升级后，不能连接下位机。重启控制器后可以连接以太网连接正常。
+*	原因：下位机以太网没有硬件复位
+* 	解决：增加 udp_disconnect() 函数。修改函数 Ethernet_Configuration(); 增加以太网硬件复位。
+* -------------------------------------------------------------------------------------------------------
 *********************************************************************************************************
 */
 
@@ -93,6 +100,9 @@ void ms_delay(uint8_t md);
 
 static err_t SocketSend(void *parent, const uint8_t *data, uint32_t lenth, struct SOCKET_TypeDef *socket);
 static void SocketClose(void *parent);
+
+
+
 
 /*
 *********************************************************************************************************
@@ -495,6 +505,57 @@ static void ServerInitCmd(struct SERVER_TypeDef *this)
 
 /*
 *********************************************************************************************************
+* Function Name : LwIP_PeriodicHandler
+* Description	: LwIP周期性处理任务
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+static void LwIP_PeriodicHandler(void)
+{
+	extern __IO uint32_t LocalTime;
+	void LwIP_Periodic_Handle(__IO uint32_t localtime);
+	
+	for (uint32_t i=0; i<50; ++i) {
+		LwIP_Periodic_Handle(LocalTime);
+		ms_delay(1);
+	}
+}
+
+/*
+*********************************************************************************************************
+* Function Name : SystemRebootHandler
+* Description	: 系统重启处理
+* Input			: None
+* Output		: None
+* Return		: None
+*********************************************************************************************************
+*/
+static void SystemRebootHandler(struct SERVER_TypeDef *this)
+{
+	if (this->reboot)
+	{
+		this->reboot = FALSE;
+		
+		SendBroadcastCmd(this, CMD_NOTIFY_DISCONNECT);
+		ms_delay(50);
+		
+		extern struct udp_pcb *UdpPcb;
+		udp_disconnect(UdpPcb);		
+		extern struct netif netif;
+		netif_set_down(&netif);
+		ms_delay(50);	
+
+		LwIP_PeriodicHandler();
+		ms_delay(50);
+		
+		NVIC_SystemReset();
+	}
+}
+
+/*
+*********************************************************************************************************
 * Function Name : ParseClientRequest
 * Description	: 解析客户端请求
 * Input			: None
@@ -546,13 +607,7 @@ static void ParseClientRequest(struct SERVER_TypeDef *this, uint32_t length, con
 		return;
 	}
 	ETH_SendPackage(this, msgBuffer, msgSize, 0, index);	
-	if (this->reboot)
-	{
-		SendBroadcastCmd(this, CMD_NOTIFY_DISCONNECT);
-		ms_delay(200);
-		
-		NVIC_SystemReset();
-	}
+	SystemRebootHandler(this);
 }
 
 /*
@@ -610,12 +665,7 @@ static void bsp_InitUDP_Server(struct UDP_SERVER_TypeDef *this)
 {
 	UDP_SocketInit(this, SocketServer_CallBack);	
 	ServerInitCmd(&this->server);
-	/* 冷启动必须执行一次，才能正常发出命令 */
-	{
-		extern __IO uint32_t LocalTime;
-		void LwIP_Periodic_Handle(__IO uint32_t localtime);
-		LwIP_Periodic_Handle(LocalTime);
-	}
+	LwIP_PeriodicHandler();
 	SendBroadcastCmd(&this->server, CMD_NOTIFY_CONNECT);
 }
 

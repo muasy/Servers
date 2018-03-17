@@ -45,6 +45,9 @@
 * 1.问题：自动升级后，不能连接下位机。重启控制器后可以连接以太网连接正常。
 *	原因：下位机以太网没有硬件复位
 * 	解决：增加 udp_disconnect() 函数。修改函数 Ethernet_Configuration(); 增加以太网硬件复位。
+* 2.问题：上位机发送命令有时候导致，下位机进入硬件中断？
+*   原因：当下位机发送大量的数据时，占用较多的内存空间，在中断嵌套时，导致堆栈资源耗尽
+*   解决：打开 startup_xxx.s 文件，将 Stack_Size      EQU     0x00000600 尽量改大！
 * -------------------------------------------------------------------------------------------------------
 *********************************************************************************************************
 */
@@ -401,7 +404,7 @@ static void SendBroadcastCmd(struct SERVER_TypeDef *this, uint16_t cmd)
 	this->remoteSocket.ip = *IP_ADDR_BROADCAST;
 	this->remoteSocket.port = SERVER_RROADCAST_PORT;
 	
-	ETH_SendPackage(this, (const uint8_t *)&package, sizeof(package), 0, nextIndex);
+	ETH_SendPackage(this, (const uint8_t *)&package, sizeof(package), ETH_INDEX, nextIndex);
 }
 
 /*
@@ -597,16 +600,10 @@ static void ParseClientRequest(struct SERVER_TypeDef *this, uint32_t length, con
 		}
 	}
 	
-	if (ret == FALSE)
+	if (ret == TRUE)
 	{
-		return;
-	}
-	/* 发送缓存溢出 */
-	if (msgSize > sizeof(msgBuffer))
-	{
-		return;
-	}
-	ETH_SendPackage(this, msgBuffer, msgSize, 0, index);	
+		ETH_SendPackage(this, msgBuffer, msgSize, ETH_INDEX, index);
+	}		
 	SystemRebootHandler(this);
 }
 

@@ -29,7 +29,8 @@
 */
 #define MESSAGE_START                      	0x1B        //消息开始标志
 #define TOKEN                              	0x0E		//记号标志
-#define MESSAGE_END                   	   	0x16  		//消息结束标志 
+#define MESSAGE_END                   	   	0x16  		//消息结束标志
+#define ETH_INDEX							0x00
 
 #define CMD_PRINT_LOG						0x0001
 #define CMD_AUTO_UPGRADE					0x0002
